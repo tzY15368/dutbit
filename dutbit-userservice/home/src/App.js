@@ -10,6 +10,7 @@ export default class App extends Component {
         this.state = {
             userCanAmend:["username","password","email"],
             userInfo:{},
+            siteInfo:"{}",
             userInfoAmend:{},
             userPasswordAmend:false,
             roles:{},
@@ -20,11 +21,10 @@ export default class App extends Component {
         }
     }
     componentWillMount = () => {
-        fetch("https://www.dutbit.com/userservice/v1/userinfo",{
+        fetch(CONFIG['USERINFO_API'],{
             method:"GET",
             headers:{
                 'Content-Type': 'application/json',
-                'Cookies':'SESSIONID=e0b01ee841efa57b3c8e316ca27139f5'
             }
         }).then(res=>{
             if(!res.ok){
@@ -33,9 +33,8 @@ export default class App extends Component {
             }
             return res.json()
         }).then(res=>{
-            console.log(res)
-            this.setState({userInfo:res})
-            let roles = {"vol_time_admin":"志愿时长查询管理员","super_admin":"Super Admin"}
+            console.log(res);
+            let roles = {"vol_time_admin":"志愿时长查询管理员","super_admin":"Super Admin"};
             let userInfoAmend = {};
             for(let i=0;i<this.state.userCanAmend.length;i++){
                 userInfoAmend[this.state.userCanAmend[i]] = {
@@ -46,7 +45,8 @@ export default class App extends Component {
             this.setState({
                 userInfo:res,
                 roles:roles,
-                userInfoAmend:userInfoAmend
+                userInfoAmend:userInfoAmend,
+                siteInfo:res.site,
             })
         }).catch(err=>{
             console.log(`Error encountered: ${err}`)
@@ -72,7 +72,6 @@ export default class App extends Component {
         message.error(err);
     };
     handleModalOk = e => {
-        console.log(e);
         let result = {};
         for(let i=0;i<this.state.userCanAmend.length;i++){
             if(this.state.userCanAmend[i]==="password"){
@@ -82,8 +81,7 @@ export default class App extends Component {
         }
         result['old_password'] = this.state.oldPasswordInput;
         result['new_password'] = this.state.newPasswordInput;
-        console.log(result);
-        //checking
+        console.log("update result: ",result);
         this.setState({
             modalLoading:true
         });
@@ -96,11 +94,11 @@ export default class App extends Component {
         }).then(res=>{
             this.setState({modalLoading:false});
             if(!res.ok){
-                console.log(res);
                 return Promise.reject(res.status)
             }
             return res.json()
         }).then((res)=>{
+            console.log(res)
             if(res.success){
                 this.SuccessMsg(res.details);
                 this.setState({modalVisible:false});
@@ -114,9 +112,9 @@ export default class App extends Component {
         setTimeout(()=>{this.setState({modalLoading:false,modalVisible:false})},2000)
     };
     handleAmend = (e)=>{
-        let old_val = this.state.userInfoAmend
-        old_val[e.target.placeholder]["value"] = e.target.value
-        console.log(old_val)
+        let old_val = this.state.userInfoAmend;
+        old_val[e.target.placeholder]["value"] = e.target.value;
+        //console.log(old_val)
         this.setState({
             userInfoAmend:old_val
         })
@@ -134,19 +132,17 @@ export default class App extends Component {
         })
     };
     toggleDisabled = (e,r)=>{
-        console.log(e,r)
+        //console.log(e,r)
         //e.target.enable()
-        let old_state = this.state.userInfoAmend
-        old_state[e]['disabled'] = !old_state[e]['disabled']
+        let old_state = this.state.userInfoAmend;
+        old_state[e]['disabled'] = !old_state[e]['disabled'];
         this.setState({
             userInfoAmend:old_state
         })
     };
     render(){
         const {userInfo,roles,modalVisible,userInfoAmend,modalLoading,userPasswordAmend,oldPasswordInput,newPasswordInput} = this.state;
-        const siteInfo = JSON.parse(userInfo.site);
-        //console.log(userInfoAmend);
-        //console.log('old psw val:',oldPasswordInput,'new psw val',newPasswordInput)
+        const siteInfo = JSON.parse(this.state.siteInfo);
         return (
             <div>
                 <Modal
@@ -238,7 +234,7 @@ export default class App extends Component {
                         {
                             Object.keys(siteInfo).map((key,value)=>{
                                 return (
-                                    <div>
+                                    <div id={value}>
                                         <Badge status="processing" text="" />{roles[key]}
                                     </div>
                                 )
