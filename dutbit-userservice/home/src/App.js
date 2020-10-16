@@ -4,6 +4,8 @@ import { EyeInvisibleOutlined,EyeTwoTone,CloseOutlined } from '@ant-design/icons
 import './App.css'
 import {EditOutlined} from "@ant-design/icons";
 import CONFIG from "./config";
+import js_date_time from "./utils/datetime";
+import ValidateEmail from "./utils/ValidateEmail";
 export default class App extends Component {
     constructor(props) {
         super(props);
@@ -25,11 +27,17 @@ export default class App extends Component {
             method:"GET",
             headers:{
                 'Content-Type': 'application/json',
+                redirect: 'follow'
             }
         }).then(res=>{
+            console.log(res)
             if(!res.ok){
                 this.ErrorMsg(`An error occurred: ${res}`);
                 return Promise.reject(res)
+            }
+            if (res.redirected) {
+                window.location.href = res.url;
+                return Promise.reject("Did you log in?")
             }
             return res.json()
         }).then(res=>{
@@ -49,6 +57,7 @@ export default class App extends Component {
                 siteInfo:res.site,
             })
         }).catch(err=>{
+            this.ErrorMsg(`Error encountered: ${err}`);
             console.log(`Error encountered: ${err}`)
         });
         //let jinfo = {"_id":"5f6ea1df06f16c9c47adbaa7","confirmation":"map[]","created_at":"1601085919856","email":"tzy15368@outlook.com","ip":"111.117.123.72","last_login_ip":"111.117.123.72","last_login_time":"1602759214294","password":"bf278df12620a00e3e76a8a9cce6f705","role":"[]","site":"{\"super_admin\":true}","username":"LN"}
@@ -58,8 +67,7 @@ export default class App extends Component {
             modalVisible: true,
         });
     };
-    handleModalCancel = e => {
-        console.log(e);
+    handleModalCancel = () => {
         this.setState({
             modalVisible: false,
         });
@@ -82,6 +90,19 @@ export default class App extends Component {
         result['old_password'] = this.state.oldPasswordInput;
         result['new_password'] = this.state.newPasswordInput;
         console.log("update result: ",result);
+        const min_length = CONFIG['MINIMAL_PASSWORD_LENGTH'];
+        if(result['username']===''){
+            this.ErrorMsg(`Invalid username`);
+            return;
+        }
+        if(!ValidateEmail(result['email'])){
+            this.ErrorMsg(`Invalid email address`);
+            return;
+        }
+        if(result['old_password'].length<min_length||result['new_password'].length<min_length){
+            this.ErrorMsg(`Password is shorter than ${min_length} characters`);
+            return;
+        }
         this.setState({
             modalLoading:true
         });
@@ -89,16 +110,21 @@ export default class App extends Component {
             method:"PUT",
             headers:{
                 'Content-Type': 'application/json',
+                redirect: 'follow'
             },
             body: JSON.stringify(result)
         }).then(res=>{
+            if (res.redirected) {
+                window.location.href = res.url;
+                return Promise.reject("Did you log in?")
+            }
             this.setState({modalLoading:false});
             if(!res.ok){
                 return Promise.reject(res.status)
             }
             return res.json()
         }).then((res)=>{
-            console.log(res)
+            console.log(res);
             if(res.success){
                 this.SuccessMsg(res.details);
                 this.setState({modalVisible:false});
@@ -107,7 +133,7 @@ export default class App extends Component {
             }
         }).then(this.componentWillMount).catch(err=>{
             console.log(err);
-            this.ErrorMsg("Error encountered: "+err)
+            this.ErrorMsg(`Error encountered: ${err}`);
         });
         setTimeout(()=>{this.setState({modalLoading:false,modalVisible:false})},2000)
     };
@@ -226,21 +252,24 @@ export default class App extends Component {
                 >
                     <Descriptions.Item label="Username" onMouse>{userInfo.username}</Descriptions.Item>
                     <Descriptions.Item label="Email">{userInfo.email}</Descriptions.Item>
-                    <Descriptions.Item label="Previous Login Time">{userInfo.last_login_time}</Descriptions.Item>
+                    <Descriptions.Item label="Previous Login Time">{js_date_time(parseInt(userInfo.last_login_time))}</Descriptions.Item>
                     <Descriptions.Item label="Password">*</Descriptions.Item>
                     <Descriptions.Item label="Validation">{userInfo.confirmation}</Descriptions.Item>
                     <Descriptions.Item label="Previous Login Ip">{userInfo.ip}</Descriptions.Item>
                     <Descriptions.Item label="Role">
-                        {
-                            Object.keys(siteInfo).map((key,value)=>{
-                                return (
-                                    <div id={value}>
-                                        <Badge status="processing" text="" />{roles[key]}
-                                    </div>
-                                )
-                            })
-                        }
+                        <div>
+                            <Badge status="success" text="" />{'Default User'}
+                            {
+                                Object.keys(siteInfo).map((key,value)=>{
+                                    return (
+                                        <div id={value}>
+                                            <Badge status="processing" text="" />{roles[key]}
+                                        </div>
+                                    )
+                                })
 
+                            }
+                        </div>
                     </Descriptions.Item>
                 </Descriptions>
             </div>
