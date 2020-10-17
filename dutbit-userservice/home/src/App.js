@@ -99,7 +99,10 @@ export default class App extends Component {
             this.ErrorMsg(`Invalid email address`);
             return;
         }
-        if(result['old_password'].length<min_length||result['new_password'].length<min_length){
+        if(
+            result['old_password']!==''&&result['new_password']!==''&&
+            (result['old_password'].length<min_length||result['new_password'].length<min_length)
+        ){
             this.ErrorMsg(`Password is shorter than ${min_length} characters`);
             return;
         }
