@@ -17,11 +17,12 @@ import (
 
 	//"./db/RedisConnector"
 	//"context"
-	//"fmt"
 	"encoding/json"
+	//"fmt"
 	"math/rand"
 	"net/http"
 
+	//"reflect"
 	"github.com/wonderivan/logger"
 
 	"github.com/garyburd/redigo/redis"
@@ -35,6 +36,12 @@ type RegisterRequest struct {
 	Username string `json:"username" binding:"required"`
 	Email    string `json:"email" binding:"required"`
 	Password string `json:"password" binding:"required"`
+}
+type UpdateRequest struct {
+	Username    string `json:"username" binding:"required"`
+	Email       string `json:"email" binding:"required"`
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
 }
 type RegisterDocument struct {
 	Username        string                 `json:"username" binding:"required"`
@@ -58,6 +65,17 @@ func MD5(str string) string {
 	h := md5.New()
 	h.Write([]byte(str))
 	return hex.EncodeToString(h.Sum(nil))
+}
+func JSONToMap(str string) map[string]interface{} {
+
+	var tempMap map[string]interface{}
+
+	err := json.Unmarshal([]byte(str), &tempMap)
+
+	if err != nil {
+		panic(err)
+	}
+	return tempMap
 }
 func GetSessionId(addr string) string {
 	rand.Seed(time.Now().UnixNano())
@@ -84,24 +102,29 @@ func GetRegisterDocument(RegRequest RegisterRequest, UserIp string) RegisterDocu
 		Confirmation:    make(map[string]interface{}),
 	}
 }
+
+/*
+* generates a sessionid, puts it in redis, and starts a goroutine to sync sessionid in mongodb??
+ */
 func session_start(c *gin.Context, sessioninfo map[string]interface{}) string {
 	IpArray, _ := c.Request.Header["X-Real-Ip"]
 	Ip := IpArray[0]
 	sessionid := GetSessionId(Ip)
 	//_, err :=
 	redis_conn.Do("hmset", redis.Args{}.Add(sessionid).AddFlat(sessioninfo)...)
+	redis_conn.Do("EXPIRE", sessionid, 2592000)
 	//ErrorHandler(err, "hmset error(redis)")
 	c.SetCookie("SESSIONID", sessionid, 2592000, "/", ".dutbit.com", true, false)
 	return sessionid
 }
 func RedisInit() {
-	cli, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialPassword("")) //add password here
+	cli, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialPassword("Bit_redis_123"))
 	ErrorHandler(err, "redis connection error")
 	logger.Info("redis connected")
 	redis_conn = cli
 }
 func MongoInit() {
-	clientOptions := options.Client().ApplyURI("mongodb://admin:@localhost:27017/?authSource=admin") //add password here
+	clientOptions := options.Client().ApplyURI("mongodb://admin:Bit_root_123@localhost:27017/?authSource=admin")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	ErrorHandler(err, "mongodb connection error")
 	err = client.Ping(context.TODO(), nil)
@@ -138,12 +161,111 @@ func logout_handler(c *gin.Context) {
 	c.Redirect(http.StatusTemporaryRedirect, "https://www.dutbit.com/wp20/index.php?logout")
 	return
 }
-func userinfo_handler(c *gin.Context) {
+func send(sessionid []string, sessioninfo map[string]interface{}) {
+	logger.Info("len of send:", len(sessionid))
+	logger.Info("sessioninfo:", sessioninfo)
+	for i := 0; i < len(sessionid); i++ {
+		if _, err := redis_conn.Do("hmset", redis.Args{}.Add(sessionid[i]).AddFlat(sessioninfo)...); err != nil {
+			ErrorHandler(err, "err")
+		}
+		if _, err := redis_conn.Do("EXPIRE", sessionid[i], 2592000); err != nil {
+			ErrorHandler(err, "err")
+		}
+		logger.Error("redis send:", i)
+	}
+	if err := redis_conn.Flush(); err != nil {
+		ErrorHandler(err, "err")
+	}
+}
+
+func receive(sessionid []string) {
+	logger.Info("len of receive:", len(sessionid))
+	for i := 0; i < len(sessionid); i++ {
+		_, err := redis_conn.Receive()
+		logger.Warn("redis receive", i)
+		ErrorHandler(err, "err")
+	}
+}
+func sync_to_redis(sessionid []string, sessioninfo map[string]interface{}) {
+	send(sessionid, sessioninfo) //go??
+	//receive(sessionid) it's redis.do, not redis.send, no neeed to recv()
+}
+func userinfo_get_handler(c *gin.Context) {
 	sessionid, _ := c.Cookie("SESSIONID")
 	logger.Info("cookie:", sessionid)
 	result, err := redis.StringMap(redis_conn.Do("hgetall", sessionid))
 	ErrorHandler(err, "userinfo handler (redis)error")
+	result["password"] = ""
+	result["session"] = ""
 	c.JSON(200, result)
+}
+func userinfo_put_handler(c *gin.Context) {
+	var JSONInput UpdateRequest
+	if err := c.ShouldBindJSON(&JSONInput); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"details": "Invalid Input" + err.Error(),
+		})
+		return
+	}
+	//logger.Info(JSONInput)
+	sessionid, _ := c.Cookie("SESSIONID")
+	uid, err := redis.String(redis_conn.Do("hget", sessionid, "_id"))
+	ErrorHandler(err, "userinfo handler (redis)error")
+	ObjId, _ := primitive.ObjectIDFromHex(uid)
+	filter := bson.M{"_id": ObjId}
+	logger.Info("objid:", ObjId, uid)
+	query_map := bson.M{}
+
+	query_map["username"] = JSONInput.Username
+	query_map["email"] = JSONInput.Email
+	query_map["updated_at"] = time.Now().UTC().UnixNano() / 1e6
+	if JSONInput.OldPassword != "" && JSONInput.NewPassword != "" {
+		logger.Warn("changing password")
+		query_map["password"] = JSONInput.NewPassword
+		filter["password"] = JSONInput.OldPassword
+	} else {
+		logger.Warn("NOT changing passsword")
+	}
+
+	update := bson.D{
+		{"$set", query_map},
+	}
+	original := make(map[string]interface{})
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.ReturnDocument(1)) //我太强了 蒙对了
+	UserCollection.FindOneAndUpdate(
+		context.Background(),
+		filter,
+		update,
+		opts,
+	).Decode(&original)
+	if len(original) == 0 {
+		c.JSON(200, gin.H{
+			"success": false,
+			"details": "Not Found.",
+		})
+		return
+	}
+	/*
+		updates sessioninfo to all existing redis sessionids
+	*/
+	sessions := original["session"]
+	siteJSON, _ := json.Marshal(original["site"])
+	original["site"] = siteJSON
+	original["_id"] = original["_id"].(primitive.ObjectID).Hex()
+	original["session"] = ""
+	var sessionids []string
+	for _, v := range sessions.(primitive.A) {
+		iv := v.(map[string]interface{})
+		sessionids = append(sessionids, iv["sessionid"].(string))
+	}
+	sync_to_redis(sessionids, original)
+	logger.Warn(original)
+	c.JSON(200, gin.H{
+		"success": true,
+		"details": "Personal Info Update Successful",
+	})
+	return
 }
 func login_handler(c *gin.Context) {
 	var JSONInput LoginRequest
@@ -151,7 +273,7 @@ func login_handler(c *gin.Context) {
 	if err := c.ShouldBindJSON(&JSONInput); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"details": "无效的输入",
+			"details": "Invalid Input",
 		})
 		return
 	}
@@ -159,12 +281,6 @@ func login_handler(c *gin.Context) {
 	now := time.Now().UTC().UnixNano() / 1e6
 	logger.Info("login: ", Ip)
 	filter := bson.M{"email": JSONInput.Email, "password": JSONInput.Password}
-	updateField := make(map[string]interface{})
-	updateField["last_login_ip"] = Ip[0]
-	updateField["last_login_time"] = now
-	update := bson.D{
-		{"$set", updateField},
-	}
 	err := UserCollection.FindOne(context.TODO(), filter).Decode(&original)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -176,13 +292,21 @@ func login_handler(c *gin.Context) {
 	}
 	siteJSON, _ := json.Marshal(original["site"])
 	original["site"] = siteJSON
-	//objId,err:= primitive.ObjectIDFromHex(original["_id"])
-	//ErrorHandler(err,"fatal")
-
-	logger.Info(original["_id"].(primitive.ObjectID).Hex())
-	//c.JSON(200, original)
-	//return
 	original["_id"] = original["_id"].(primitive.ObjectID).Hex()
+	sessionid := session_start(c, original)
+	sessionField := make(map[string]interface{})
+	sessionField["sessionid"] = sessionid
+	sessionField["expireAt"] = time.Now().UTC().UnixNano()/1e6 + 2592000
+	updateField := make(map[string]interface{})
+	updateField["last_login_ip"] = Ip[0]
+	updateField["last_login_time"] = now
+	update := bson.D{
+		{"$set", updateField},
+		{"$addToSet", bson.M{
+			"session": sessionField,
+		},
+		},
+	} // change this to findone and update
 	UpdateResult, err := UserCollection.UpdateOne(
 		context.TODO(),
 		filter,
@@ -192,13 +316,7 @@ func login_handler(c *gin.Context) {
 	if UpdateResult.ModifiedCount != 1 || UpdateResult.MatchedCount != 1 {
 		logger.Info(1)
 	}
-	/*
-		sessionid := GetSessionId(Ip[0])
-		_, erro := redis_conn.Do("hmset", redis.Args{}.Add(sessionid).AddFlat(original)...)
 
-		c.SetCookie("SESSIONID", sessionid, 2592000, "/", ".dutbit.com", true, false)
-	*/
-	sessionid := session_start(c, original)
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
 		"details":   "登陆成功",
@@ -259,7 +377,8 @@ func main() {
 		result, _ := redis.Bool(redis_conn.Do("exists", v))
 		logger.Warn(result == true)
 	})
-	g.GET("/userservice/v1/userinfo", AuthRequired, userinfo_handler)
+	g.GET("/userservice/v1/userinfo", AuthRequired, userinfo_get_handler)
+	g.PUT("/userservice/v1/userinfo", AuthRequired, userinfo_put_handler)
 	g.POST("/userservice/v1/login", login_handler)
 	g.POST("/userservice/v1/register", register_handler)
 	g.Run("127.0.0.1:8810")
