@@ -1,4 +1,5 @@
 export default function js_date_time(unixtime) {
+    if(isNaN(unixtime))return "N/A";
     var date = new Date(unixtime);
     var y = date.getFullYear();
     var m = date.getMonth() + 1;

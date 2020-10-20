@@ -23,6 +23,7 @@ export default class App extends Component {
         }
     }
     componentWillMount = () => {
+        console.log("mounting");
         fetch(CONFIG['USERINFO_API'],{
             method:"GET",
             headers:{
@@ -32,8 +33,7 @@ export default class App extends Component {
         }).then(res=>{
             console.log(res)
             if(!res.ok){
-                this.ErrorMsg(`An error occurred: ${res}`);
-                return Promise.reject(res)
+                return Promise.reject(res.status)
             }
             if (res.redirected) {
                 window.location.href = res.url;
@@ -132,7 +132,7 @@ export default class App extends Component {
                 this.SuccessMsg(res.details);
                 this.setState({modalVisible:false});
             } else {
-                this.ErrorMsg(`An error occurred: ${res.details}`)
+                return Promise.reject(res.details)
             }
         }).then(this.componentWillMount).catch(err=>{
             console.log(err);
@@ -256,7 +256,7 @@ export default class App extends Component {
                     <Descriptions.Item label="Username" onMouse>{userInfo.username}</Descriptions.Item>
                     <Descriptions.Item label="Email">{userInfo.email}</Descriptions.Item>
                     <Descriptions.Item label="Previous Login Time">{js_date_time(parseInt(userInfo.last_login_time))}</Descriptions.Item>
-                    <Descriptions.Item label="Password">*</Descriptions.Item>
+                    <Descriptions.Item label="Previous Update Time">{js_date_time(parseInt(userInfo.updated_at))}</Descriptions.Item>
                     <Descriptions.Item label="Validation">{userInfo.confirmation}</Descriptions.Item>
                     <Descriptions.Item label="Previous Login Ip">{userInfo.ip}</Descriptions.Item>
                     <Descriptions.Item label="Role">
